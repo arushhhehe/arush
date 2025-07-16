@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>RehabInk</title>
+  <title>Fingertip Tracker</title>
   <style>
     html, body {
       margin: 0;
@@ -10,110 +10,22 @@
       overflow: hidden;
       background: #000;
     }
-    video, canvas {
+    video {
       position: absolute;
-      top: 0; left: 0;
       width: 100vw;
       height: 100vh;
       object-fit: cover;
     }
-    #overlayCanvas {
-      z-index: 10;
-      pointer-events: none;
-    }
   </style>
 </head>
 <body>
-  <video id="webcam" autoplay playsinline></video>
-  <canvas id="overlayCanvas"></canvas>
+  <video id="webcam" autoplay playsinline muted></video>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
   <script>
     const videoElement = document.getElementById('webcam');
-    const canvasElement = document.getElementById('overlayCanvas');
-    const ctx = canvasElement.getContext('2d');
-    let tracePoints = [];
-
-    const shapes = [
-      [ // Triangle
-        {x: 0.5, y: 0.2},
-        {x: 0.2, y: 0.8},
-        {x: 0.8, y: 0.8},
-        {x: 0.5, y: 0.2}
-      ],
-      [ // Square
-        {x: 0.3, y: 0.3},
-        {x: 0.3, y: 0.7},
-        {x: 0.7, y: 0.7},
-        {x: 0.7, y: 0.3},
-        {x: 0.3, y: 0.3}
-      ],
-      [ // Spiral (simplified)
-        {x: 0.5, y: 0.3},
-        {x: 0.6, y: 0.3},
-        {x: 0.65, y: 0.4},
-        {x: 0.65, y: 0.5},
-        {x: 0.6, y: 0.6},
-        {x: 0.5, y: 0.65},
-        {x: 0.4, y: 0.6},
-        {x: 0.35, y: 0.5},
-        {x: 0.35, y: 0.4},
-        {x: 0.4, y: 0.35}
-      ]
-    ];
-    let currentShapeIndex = 0;
-
-    function resizeCanvas() {
-      canvasElement.width = window.innerWidth;
-      canvasElement.height = window.innerHeight;
-    }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
-    function drawGhostShape(shape) {
-      ctx.beginPath();
-      ctx.strokeStyle = "rgba(255,255,255,0.3)";
-      ctx.lineWidth = 2;
-      for (let i = 0; i < shape.length; i++) {
-        const px = shape[i].x * canvasElement.width;
-        const py = shape[i].y * canvasElement.height;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-    }
-
-    function shapeMatched(trace, shape) {
-      if (trace.length < 100) return false;
-      let matched = 0;
-      for (let i = 0; i < shape.length; i++) {
-        const sx = shape[i].x * canvasElement.width;
-        const sy = shape[i].y * canvasElement.height;
-        for (let j = 0; j < trace.length; j++) {
-          const dx = trace[j].x - sx;
-          const dy = trace[j].y - sy;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 40) {
-            matched++;
-            break;
-          }
-        }
-      }
-      return matched >= shape.length * 0.7; // 70% match
-    }
-
-    function speak(text) {
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-    }
-
-    function nextShape() {
-      currentShapeIndex = (currentShapeIndex + 1) % shapes.length;
-      tracePoints = [];
-    }
 
     const hands = new Hands({
       locateFile: (file) =>
@@ -124,51 +36,27 @@
       maxNumHands: 1,
       modelComplexity: 1,
       minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.5,
+      minTrackingConfidence: 0.7,
     });
 
     hands.onResults((results) => {
-      ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const tip = results.multiHandLandmarks[0][8]; // Index fingertip
+        const x = tip.x;
+        const y = tip.y;
 
-      // Draw ghost
-      drawGhostShape(shapes[currentShapeIndex]);
-
-      if (results.multiHandLandmarks.length > 0) {
-        const tip = results.multiHandLandmarks[0][8];
-        const x = tip.x * canvasElement.width;
-        const y = tip.y * canvasElement.height;
-
-        // Red fingertip
-        ctx.fillStyle = "red";
-        ctx.beginPath();
-        ctx.arc(x, y, 6, 0, 2 * Math.PI);
-        ctx.fill();
-
-        // Add to trace
-        tracePoints.push({ x, y });
-
-        // Draw trace
-        ctx.strokeStyle = "lime";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let i = 0; i < tracePoints.length; i++) {
-          const p = tracePoints[i];
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
-        ctx.stroke();
-
-        // Check for shape match
-        if (shapeMatched(tracePoints, shapes[currentShapeIndex])) {
-          let score = Math.floor(Math.random() * 41) + 60; // 60-100
-          speak(`Score ${score}`);
-          nextShape();
-        }
+        // Send to Framer
+        window.parent.postMessage(
+          { type: 'fingertip', x: x, y: y },
+          '*'
+        );
       }
     });
 
     const camera = new Camera(videoElement, {
-      onFrame: async () => await hands.send({ image: videoElement }),
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
       width: 640,
       height: 480,
     });
